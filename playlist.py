@@ -33,30 +33,57 @@ def get_playlist_tracks(sp, playlist_id):
         tracks.extend(results['items'])
     return [track['track']['uri'] for track in tracks]
 
+def make_playlist_oscillate(sp, tracks):
+    # Reorder by bpm
+    tracks.sort(key=lambda x: sp.audio_features(x)[0]['tempo'])
+    # Reorder each playlist so that it oscillates in tempo
+    # a cycle is 5 tracks (medium, medium+, fast, slow, medium-)
+
+    # devide the playlist in 5
+    assert len(tracks) % 5 == 0, "Playlist length must be multiple of 5"
+    group_len  = len(tracks) // 5
+    groups = [tracks[i:i + group_len] for i in range(0, len(tracks), group_len)]
+    # reorder groups so that it starts in the middle
+    groups = groups[2:] + groups[:2]
+    # shuffle each group
+    for group in groups:
+        random.shuffle(group)
+    # interleave the groups
+    interleaved = [track for group in zip(*groups) for track in group]
+    # Sanity check: print the bpm of the playlist
+    # for track in interleaved:
+    #     print(sp.audio_features(track)[0]['tempo'])
+    return interleaved
+
 def mix_playlists(sp, playlist1_id, playlist2_id, new_playlist_name):
     """Mix two Spotify playlists into a new playlist"""
     # Get tracks from both playlists
     playlist1_tracks = get_playlist_tracks(sp, playlist1_id)
     playlist2_tracks = get_playlist_tracks(sp, playlist2_id)
 
+    # Filter only valid tracks
+    playlist1_tracks = [track for track in playlist1_tracks if track.startswith("spotify:track:")]
+    playlist2_tracks = [track for track in playlist2_tracks if track.startswith("spotify:track:")]
+
     # Shuffle the playlists
     random.shuffle(playlist1_tracks)
     random.shuffle(playlist2_tracks)
-    
-    # Alternate between tracks from the two playlists
+
+    # Select a subset of tracks from each playlist
+    max_len = 50    # Enough for 3h+
+    assert len(playlist1_tracks) >= max_len and len(playlist2_tracks) >= max_len, "Playlists are too short"
+    playlist1_tracks = playlist1_tracks[:max_len]
+    playlist2_tracks = playlist2_tracks[:max_len]
+
+    # Make the playlists oscillate in tempo
+    playlist1_tracks = make_playlist_oscillate(sp, playlist1_tracks)
+    playlist2_tracks = make_playlist_oscillate(sp, playlist2_tracks)
+
+    # Interleave the playlists
     mixed_tracks = []
-    max_length = max(len(playlist1_tracks), len(playlist2_tracks))
-    max_length = 100     # 5 hours already.
-    
-    for i in range(max_length//2):
-        try:
-            t1 = playlist1_tracks[i]
-            t2 = playlist2_tracks[i]
-        except IndexError:
-            raise IndexError("Not enough valid tracks in one of the playlists")
-        if t1.startswith("spotify:track:") and t2.startswith("spotify:track:"):
-            mixed_tracks.append(t1)
-            mixed_tracks.append(t2)
+    for t1, t2 in zip(playlist1_tracks, playlist2_tracks):
+        mixed_tracks.append(t1)
+        mixed_tracks.append(t2)
 
     new_playlist = sp.user_playlist_create(user=user_id, name=new_playlist_name, public=True)
     # Add mixed tracks to the new playlist
